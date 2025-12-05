@@ -1,5 +1,5 @@
 ;;; ImageGeoRef.lsp -- Georreferencia imagenes raster en AutoCAD usando archivos World.
-;;; Copyright (C) [Año] [Nombre del autor]
+;;; Copyright (C) 2025 Pablo Hevia
 ;;;
 ;;; This program is free software: you can redistribute it and/or modify
 ;;; it under the terms of the GNU General Public License as published by
@@ -19,6 +19,7 @@
 ;;; Lee un archivo World (.jgw, .pgw, etc.) para aplicar posición, escala y rotación.
 
 ;;; Asegura que las funciones VLAX esten disponibles (necesario para AutoCAD clasico).
+
 (if (not (vl-catch-all-error-p (vl-catch-all-apply 'vlax-get-acad-object nil)))
   (vl-load-com)
 )
