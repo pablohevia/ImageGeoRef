@@ -9,7 +9,7 @@ Esta herramienta permite a los usuarios de AutoCAD seleccionar una imagen raster
 ## Características
 
 - Georreferenciación automática de imágenes.
-- Cálculo de posición, escala y rotación.
+- Cálculo y aplicación de posición, escala y rotación. El script maneja rotaciones simples (ejes ortogonales).
 - Compatible con AutoCAD 2012 y versiones posteriores.
 - Soporta los formatos de imagen más comunes.
 - Incluye un método alternativo (usando comandos nativos) para máxima compatibilidad con diferentes versiones de AutoCAD.
