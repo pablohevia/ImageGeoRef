@@ -453,32 +453,37 @@
 ;;; El ancho y el alto son enteros de 32 bits (big-endian) en el chunk IHDR,
 ;;; comenzando en el byte 16 del archivo.
 (defun get-png-dimensions (file-path / bytes width height err stream-obj)
-  (setq width 0 height 0)
-  (setq err (vl-catch-all-apply
-              '(lambda ()
-                 (setq stream-obj (vlax-create-object "ADODB.Stream"))
-                 (vlax-put-property stream-obj 'Type 1) ; 1 = adTypeBinary
-                 (vlax-invoke stream-obj 'Open) ; Usar vlax-invoke sin argumentos, es el método estándar para abrir un stream vacío
-                 (vlax-invoke-method stream-obj 'LoadFromFile file-path)
-                 (vlax-put-property stream-obj 'Position 16)
-                 (setq bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 8))))
-                 (vlax-invoke-method stream-obj 'Close)
-                 (vlax-release-object stream-obj)
-                 (setq stream-obj nil)
-               )
-            )
-  )
-  (if (vl-catch-all-error-p err)
+  (setq width 0 height 0 stream-obj nil)
+  (unwind-protect
     (progn
-      (princ (strcat "\n[ERROR] No se pudo leer el archivo PNG para obtener sus dimensiones: " (vl-catch-all-error-message err)))
-      (if stream-obj (vlax-release-object stream-obj)) ; Asegurarse de liberar el objeto si hubo un error a medio camino
+      (setq err (vl-catch-all-apply
+                  '(lambda ()
+                     (setq stream-obj (vlax-create-object "ADODB.Stream"))
+                     (vlax-put-property stream-obj 'Type 1) ; 1 = adTypeBinary
+                     (vlax-invoke stream-obj 'Open)
+                     (vlax-invoke-method stream-obj 'LoadFromFile file-path)
+                     (vlax-put-property stream-obj 'Position 16)
+                     (setq bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 8))))
+                   )
+                )
+      )
+      (if (vl-catch-all-error-p err)
+        (princ (strcat "\n[ERROR] No se pudo leer el archivo PNG para obtener sus dimensiones: " (vl-catch-all-error-message err)))
+        (if (and bytes (= (length bytes) 8))
+          (progn ; Si la lectura fue exitosa, procesar los bytes
+            ;; Calcular ancho (bytes 0-3, big-endian)
+            (setq width (+ (* (nth 0 bytes) 16777216) (* (nth 1 bytes) 65536) (* (nth 2 bytes) 256) (nth 3 bytes)))
+            ;; Calcular alto (bytes 4-7, big-endian)
+            (setq height (+ (* (nth 4 bytes) 16777216) (* (nth 5 bytes) 65536) (* (nth 6 bytes) 256) (nth 7 bytes)))
+          )
+        )
+      )
     )
-    (if (and bytes (= (length bytes) 8))
+    ;; Cleanup: Se ejecuta siempre, haya error o no.
+    (if (and stream-obj (not (vlax-object-released-p stream-obj)))
       (progn ; Si la lectura fue exitosa, procesar los bytes
-        ;; Calcular ancho (bytes 0-3, big-endian)
-        (setq width (+ (* (nth 0 bytes) 16777216) (* (nth 1 bytes) 65536) (* (nth 2 bytes) 256) (nth 3 bytes)))
-        ;; Calcular alto (bytes 4-7, big-endian)
-        (setq height (+ (* (nth 4 bytes) 16777216) (* (nth 5 bytes) 65536) (* (nth 6 bytes) 256) (nth 7 bytes)))
+        (vlax-invoke-method stream-obj 'Close)
+        (vlax-release-object stream-obj)
       )
     )
   )
@@ -490,58 +495,66 @@
 ;;; y extrae el ancho y el alto.
 ;;; Especificacion JPEG: https://www.w3.org/Graphics/JPEG/itu-t81.pdf
 (defun get-jpeg-dimensions (file-path / stream-obj err width height found-marker marker-type segment-len-bytes segment-len h-bytes w-bytes)
-  (setq width 0 height 0 found-marker nil)
-  (setq err (vl-catch-all-apply
-              '(lambda ()
-                 (setq stream-obj (vlax-create-object "ADODB.Stream"))
-                 (vlax-put-property stream-obj 'Type 1) ; adTypeBinary
-                 (vlax-invoke stream-obj 'Open)
-                 (vlax-invoke-method stream-obj 'LoadFromFile file-path)
-                 
-                 ;; Saltar marcador SOI (Start of Image), que son 2 bytes (FF D8)
-                 (vlax-put-property stream-obj 'Position 2)
-                 
-                 ;; Buscar el marcador SOF (Start of Frame)
-                 (while (and (not found-marker) (< (vlax-get-property stream-obj 'Position) (vlax-get-property stream-obj 'Size)))
-                   ;; Todos los marcadores empiezan con 0xFF
-                   (if (= (car (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 1)))) 255)
-                     (progn
-                       (setq marker-type (car (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 1)))))
-                       (cond
-                         ;; Marcadores SOF (Start of Frame) que contienen dimensiones.
-                         ;; SOF0, SOF1, SOF2, etc. (0xC0-CF), excluyendo DHT(C4), JPGR(C8), DAC(CC).
-                         ((member marker-type '(192 193 194 195 197 198 199 201 202 203 205 206 207))
-                           (setq found-marker T)
-                           (vlax-invoke-method stream-obj 'Read 3) ; Saltar longitud del segmento (2) y precision (1)
-                           (setq h-bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 2))))
-                           (setq w-bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 2))))
-                           (setq height (+ (* (car h-bytes) 256) (cadr h-bytes)))
-                           (setq width (+ (* (car w-bytes) 256) (cadr w-bytes)))
-                         )
-                         ;; Marcadores sin datos (RST, SOI, EOI) - no deberian encontrarse aqui, pero por si acaso.
-                         ((member marker-type '(1 208 209 210 211 212 213 214 215 216 217))
-                           ; No hacer nada, solo seguir buscando
-                         )
-                         ;; Otros marcadores tienen un campo de longitud que nos permite saltarlos.
-                         (T
-                           (setq segment-len-bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 2))))
-                           (setq segment-len (+ (* (car segment-len-bytes) 256) (cadr segment-len-bytes)))
-                           ;; Mover la posicion mas alla de este segmento
-                           (vlax-put-property stream-obj 'Position (+ (vlax-get-property stream-obj 'Position) (- segment-len 2)))
+  (setq width 0 height 0 found-marker nil stream-obj nil)
+  (unwind-protect
+    (progn
+      (setq err (vl-catch-all-apply
+                  '(lambda ()
+                     (setq stream-obj (vlax-create-object "ADODB.Stream"))
+                     (vlax-put-property stream-obj 'Type 1) ; adTypeBinary
+                     (vlax-invoke stream-obj 'Open)
+                     (vlax-invoke-method stream-obj 'LoadFromFile file-path)
+                     
+                     ;; Saltar marcador SOI (Start of Image), que son 2 bytes (FF D8)
+                     (vlax-put-property stream-obj 'Position 2)
+                     
+                     ;; Buscar el marcador SOF (Start of Frame)
+                     (while (and (not found-marker) (< (vlax-get-property stream-obj 'Position) (vlax-get-property stream-obj 'Size)))
+                       ;; Todos los marcadores empiezan con 0xFF
+                       (if (= (car (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 1)))) 255)
+                         (progn
+                           (setq marker-type (car (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 1)))))
+                           (cond
+                             ;; Marcadores SOF (Start of Frame) que contienen dimensiones.
+                             ;; SOF0, SOF1, SOF2, etc. (0xC0-CF), excluyendo DHT(C4), JPGR(C8), DAC(CC).
+                             ((member marker-type '(192 193 194 195 197 198 199 201 202 203 205 206 207))
+                               (setq found-marker T)
+                               (vlax-invoke-method stream-obj 'Read 3) ; Saltar longitud del segmento (2) y precision (1)
+                               (setq h-bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 2))))
+                               (setq w-bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 2))))
+                               (setq height (+ (* (car h-bytes) 256) (cadr h-bytes)))
+                               (setq width (+ (* (car w-bytes) 256) (cadr w-bytes)))
+                             )
+                             ;; Marcadores sin datos (RST, SOI, EOI) - no deberian encontrarse aqui, pero por si acaso.
+                             ((member marker-type '(1 208 209 210 211 212 213 214 215 216 217))
+                               ; No hacer nada, solo seguir buscando
+                             )
+                             ;; Otros marcadores tienen un campo de longitud que nos permite saltarlos.
+                             (T
+                               (setq segment-len-bytes (vlax-safearray->list (vlax-variant-value (vlax-invoke-method stream-obj 'Read 2))))
+                               (setq segment-len (+ (* (car segment-len-bytes) 256) (cadr segment-len-bytes)))
+                               ;; Mover la posicion mas alla de este segmento
+                               (vlax-put-property stream-obj 'Position (+ (vlax-get-property stream-obj 'Position) (- segment-len 2)))
+                             )
+                           )
                          )
                        )
                      )
                    )
-                 )
-                 (vlax-invoke-method stream-obj 'Close)
-                 (vlax-release-object stream-obj)
-                 (setq stream-obj nil)
-               )
-            )
-  )
-  (if (vl-catch-all-error-p err)
-    (progn (princ (strcat "\n[ERROR] No se pudo leer el archivo JPEG: " (vl-catch-all-error-message err))) (if stream-obj (vlax-release-object stream-obj)))
-    (if (not found-marker) (princ "\n[ADVERTENCIA] No se encontró el marcador de dimensiones (SOF) en el archivo JPEG."))
+                )
+      )
+      (if (vl-catch-all-error-p err)
+        (princ (strcat "\n[ERROR] No se pudo leer el archivo JPEG: " (vl-catch-all-error-message err)))
+        (if (not found-marker) (princ "\n[ADVERTENCIA] No se encontró el marcador de dimensiones (SOF) en el archivo JPEG."))
+      )
+    )
+    ;; Cleanup: Se ejecuta siempre, haya error o no.
+    (if (and stream-obj (not (vlax-object-released-p stream-obj)))
+      (progn
+        (vlax-invoke-method stream-obj 'Close)
+        (vlax-release-object stream-obj)
+      )
+    )
   )
   (list width height)
 )
