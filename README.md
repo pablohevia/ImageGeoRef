@@ -29,7 +29,7 @@ Esta herramienta permite a los usuarios de AutoCAD seleccionar una imagen raster
     *   Haz clic en "Load". Verás un mensaje de confirmación en la línea de comandos: `[OK] ImageGeoRef.lsp cargado.`
 
 2.  **Ejecutar el comando:**
-    *   La imagen que quieres georreferenciar debe estar previamente insertada en el dibujo como una referencia externa (usando el comando `_IMAGEATTACH` o `_REFERENCES`). Su posición, escala o rotación iniciales no importan, ya que el script las sobrescribirá.
+    *   La imagen que quieres georreferenciar debe estar previamente insertada en el dibujo como una referencia externa (usando el comando `_IMAGEATTACH` o `_REFERENCES`). Su posición o escala iniciales no importan, ya que el script las sobrescribirá.
     *   El archivo *World* debe tener **exactamente el mismo nombre** que el archivo de imagen y estar en la misma carpeta, cambiando únicamente la extensión (p. ej., `imagen_aerea.jpg` y `imagen_aerea.jgw`).
     *   Escribe el comando `IMAGEGEOREF` en la línea de comandos y presiona Enter.
     *   Sigue las instrucciones: selecciona la imagen raster.
